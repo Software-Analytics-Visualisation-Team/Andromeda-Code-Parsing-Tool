@@ -1,0 +1,14 @@
+/venvs/*
+__pycache__/
+input/
+code_files/
+antlr_generated_code/cpp/__pycache__/
+antlr_generated_code/java/__pycache__/
+listeners/__pycache__/
+*.vscode
+*.cpp
+*.h
+*.owl
+*.pyc
+*.java
+*.Identifier

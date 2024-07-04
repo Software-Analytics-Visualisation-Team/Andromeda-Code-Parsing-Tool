@@ -1,0 +1,27 @@
+<tool id="zip_to_spif" name="Code to SPIF" version="1.0.3">
+  <description>converts zip (code) data to SPIF data</description>
+  <requirements>
+    <requirement type="package" version="3.10">python</requirement>
+  </requirements>
+  <command>pip3 install antlr4-python3-runtime rdflib https://github.com/Moonshot-SEP/monitors4codegen/archive/refs/tags/c++.zip; python3 '${__tool_directory__}/main.py' '$input' '$output'</command> 
+  <inputs>
+    <param name="input" type="data" format="zip" multiple="True" label="Zip (code) file(s)" />
+  </inputs>
+  <outputs>
+    <data format="spif" name="output" />
+  </outputs>
+  <help>
+**What it does**
+
+This tool takes a zip (**code**) file, extracts the code, interprets it as ASTs and then converts it to a SPIF file.
+
+-----
+
+**Example**
+
+Converting a zip (**code**) file provides:
+
+- Galaxyx-[Code_to_SPIF_on_data_x].spif
+
+  </help>
+</tool>
