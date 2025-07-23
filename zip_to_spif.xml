@@ -1,8 +1,12 @@
 <tool id="zip_to_spif" name="Code to SPIF" version="1.0.3">
   <description>converts zip (code) data to SPIF data</description>
   <requirements>
+    <!-- <requirement type="package">monitors4codegen</requirement> -->
+    <requirement type="package">rdflib</requirement>
+    <requirement type="package">antlr4-python3-runtime==4.12.0</requirement>
     <requirement type="package" version="3.10">python</requirement>
   </requirements>
+  <!-- <command>python3 '${__tool_directory__}/main.py' '$input' '$output'</command> -->
   <command>pip3 install antlr4-python3-runtime rdflib https://github.com/Moonshot-SEP/monitors4codegen/archive/refs/tags/c++.zip; python3 '${__tool_directory__}/main.py' '$input' '$output'</command> 
   <inputs>
     <param name="input" type="data" format="zip" multiple="True" label="Zip (code) file(s)" />
