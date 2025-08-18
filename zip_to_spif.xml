@@ -2,8 +2,6 @@
   <description>converts zip (code) data to SPIF data</description>
   <requirements>
     <!-- <requirement type="package">monitors4codegen</requirement> -->
-    <requirement type="package">rdflib</requirement>
-    <requirement type="package">antlr4-python3-runtime==4.12.0</requirement>
     <requirement type="package" version="3.10">python</requirement>
   </requirements>
   <!-- <command>python3 '${__tool_directory__}/main.py' '$input' '$output'</command> -->
