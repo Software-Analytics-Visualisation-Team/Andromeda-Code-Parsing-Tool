@@ -1,4 +1,5 @@
 from owl_constructor import OWLConstructor
+from rdflib.term import URIRef 
 
 class CPPListenerBase(OWLConstructor):
 
@@ -115,8 +116,26 @@ class CPPListenerBase(OWLConstructor):
         self.namespaceNestings.append(self.NamespaceState(instance))
 
     def setCurrentModifierInstance(self, modifier):
-        """ Set the current modifier instance."""
+        """
+        Push the current access‑modifier onto self.modifierNestings
+        **always as the plain identifier string** ('public', 'private', …).
 
+        If the parser gives us the OWL individual (a rdflib.URIRef),
+        translate it back first so the later dictionary lookup succeeds.
+        """
+
+        # 1 – Map URIRef → identifier
+        if isinstance(modifier, URIRef):
+            for ident, inst in self.accessModifierInstances.items():
+                if inst == modifier:
+                    modifier = ident
+                    break
+
+        # 2 – Graceful default
+        if modifier not in self.accessModifierInstances:
+            modifier = "public"
+
+        # 3 – Store
         self.modifierNestings.append(modifier)
 
     def setCurrentMethodInstance(self, instance):
@@ -141,11 +160,21 @@ class CPPListenerBase(OWLConstructor):
             self.create_OWL_object_property_instance(class_instance, instance, "hasNestedComplexTypeMember")
 
         # Add 'hasAccesModifier' edge
-        modifier = self.getCurrentModifierInstance()
-        if modifier is None:
-            modifier = get_instance_from_code_identifier("public", class_name = "AccessModifier")
-        self.create_OWL_object_property_instance(instance, self.accessModifierInstances[modifier], "hasAccessModifier")
-        
+        modifier = self.getCurrentModifierInstance() or "public"
+
+        # If we still got the OWL individual, map it back
+        if isinstance(modifier, URIRef):
+            for ident, inst in self.accessModifierInstances.items():
+                if inst == modifier:
+                    modifier = ident
+                    break
+
+        self.create_OWL_object_property_instance(
+            instance,
+            self.accessModifierInstances[modifier],
+            "hasAccessModifier"
+        )
+                
         length = len(ctx.parentCtx.getText())
         self.create_OWL_data_property_instance(instance, "hasLength", length)
 

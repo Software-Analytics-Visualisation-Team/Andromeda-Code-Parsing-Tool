@@ -3,6 +3,9 @@ from rdflib import Graph, RDF, Literal
 import urllib.parse
 from context_interpreter import ContextInterpreter
 from language_server_communicator import LanguageServerCommunicator
+import re
+
+_UNRESERVED = re.compile(r"[A-Za-z0-9_.~\-]")
 
 class OWLConstructor(ContextInterpreter, LanguageServerCommunicator):
 
@@ -250,20 +253,35 @@ class OWLConstructor(ContextInterpreter, LanguageServerCommunicator):
         qres = self._g.query(query)
         return list(set([x['description'] for x in qres])) # Remove duplicates 
 
-    def _clean_instance_name(self, instance_name):
-        """ Clean the instance name by removing brackets and encoding the class name."""
+    # def _clean_instance_name(self, instance_name):
+    #     """ Clean the instance name by removing brackets and encoding the class name."""
         
+    #     if not instance_name:
+    #         return None
+    #     # Remove brackets, which indicate if an array of that class is created
+    #     if "[" in instance_name:
+    #         instance_name = instance_name.split("[")[0]
+
+    #     # Encode class name in order to keep the type parameter which is used
+    #     if "<" in instance_name or "|" in instance_name:
+    #         instance_name = urllib.parse.quote_plus(instance_name)
+    #     return instance_name
+    
+    def _clean_instance_name(self, instance_name: str | None) -> str | None:
         if not instance_name:
             return None
-        # Remove brackets, which indicate if an array of that class is created
-        if "[" in instance_name:
-            instance_name = instance_name.split("[")[0]
 
-        # Encode class name in order to keep the type parameter which is used
-        if "<" in instance_name or "|" in instance_name:
-            instance_name = urllib.parse.quote_plus(instance_name)
+        # strip “array” brackets:  foo[10] -> foo
+        instance_name = instance_name.split("[", 1)[0]
+
+        # Percent‑encode *anything* that is not unreserved per RFC 3986.
+        # This covers operator symbols, spaces, quotes, unicode, …
+        instance_name = "".join(
+            ch if _UNRESERVED.fullmatch(ch) else urllib.parse.quote(ch, safe="")
+            for ch in instance_name
+        )
         return instance_name
-    
+
     def get_instance_from_code_identifier(self, instance_name, class_name = None, isDeclaredMethodOf = None, isDeclaredFieldOf = None, hasDatatype = None):
         """ Get an instance from the code identifier of the instance.
         

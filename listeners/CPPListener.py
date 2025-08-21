@@ -30,27 +30,51 @@ class CPPListener(CPP14ParserListener, CPPListenerBase):
                         self.create_OWL_object_property_instance(refferenced_file, self.currentFileInstance, "isImplementedBy")
 
     def enterNamespaceDefinition(self, ctx):
-        """ Create a node of type "Namespace" for each namespace in the source code."""
+        """ Create a node of type "Namespace" for each namespace in the source code. """
 
-        namespace_name = ctx.Identifier().getText()
+        # 1) Figure out the name (handles anonymous or inline namespaces)
+        ident = ctx.Identifier()
+        if ident:
+            namespace_name = ident.getText()
+        else:
+            # First time we see an anonymous namespace, initialize the counter
+            if not hasattr(self, "_anon_ns_counter"):
+                self._anon_ns_counter = 0
+
+            namespace_name = f"_anonymous_{self._anon_ns_counter}"
+            self._anon_ns_counter += 1
+
+        # 2) Create the OWL instance & add the identifier property
         instance = self.create_OWL_class_instance(ctx, "Namespace", namespace_name)
-        if instance:
-            self.create_OWL_data_property_instance(instance, "hasCodeIdentifier", namespace_name)
+        if not instance:
+            return
 
-            # Add 'isNestedNamespaceIn' and 'hasNestedNamespaceMember' edge to the nested namespaces.
-            if len(self.namespaceNestings) > 0:
-                namespace_instance = self.getCurrentNamespaceInstance()
-                self.create_OWL_object_property_instance(instance, namespace_instance, "isNestedNamespaceIn")
-                self.create_OWL_object_property_instance(namespace_instance, instance, "hasNestedNamespaceMember")
-            # Keep track of the current namespace
-            self.setCurrentNamespaceInstance(instance)
-            # Set the default access modifier of the nodes inside the namespace
-            self.setCurrentModifierInstance("public")
+        self.create_OWL_data_property_instance(instance,
+                                            "hasCodeIdentifier",
+                                            namespace_name)
+
+        # 3) If we’re already inside another namespace, link them
+        if self.namespaceNestings:
+            parent_ns = self.getCurrentNamespaceInstance()
+            self.create_OWL_object_property_instance(instance,
+                                                    parent_ns,
+                                                    "isNestedNamespaceIn")
+            self.create_OWL_object_property_instance(parent_ns,
+                                                    instance,
+                                                    "hasNestedNamespaceMember")
+
+        # 4) Update our “current namespace” stack & default modifier
+        self.setCurrentNamespaceInstance(instance)
+        self.setCurrentModifierInstance("public")
 
     def enterEnumSpecifier(self, ctx):
         """ Create a node of type "EnumerationType" for each enum in the source code."""
-
-        enum_name = ctx.enumHead().Identifier().getText()
+        head = ctx.enumHead()
+        ident = head.Identifier()      # may be None for anonymous enums
+        if ident is None:
+            return                   # or assign a synthetic name if you prefer
+        enum_name = ident.getText()
+        # enum_name = ctx.enumHead().Identifier().getText()
         instance = self.create_OWL_class_instance(ctx.enumHead(), "EnumerationType", enum_name)
         if instance:
             self.create_OWL_data_property_instance(instance, "hasCodeIdentifier", enum_name)
@@ -103,86 +127,114 @@ class CPPListener(CPP14ParserListener, CPPListenerBase):
             self.setCurrentModifierInstance("private")
 
     def enterFunctionDefinition(self, ctx):
-        """ Create a node of type "Method" for each method in the source code.
-            Create a node of type "Constructor" for each constructor in the source code.
-            This function can find constructors and non-pure virtual methods.
-        """
+        """ Create a node of type "Method" for each method/constructor in the source code. """
 
         instance = None
-        if ctx.declSpecifierSeq(): # normal method
-            method_ctx = ctx.declarator().pointerDeclarator().noPointerDeclarator().noPointerDeclarator()
+
+        # ----- Common helper to find the last real typeSpecifier() -----
+        def _extract_return_type_spec(ctx):
+            seq = ctx.declSpecifierSeq().declSpecifier()
+            # walk from right to left until we find one with a typeSpecifier()
+            for spec in reversed(seq):
+                ts = spec.typeSpecifier()
+                if ts:
+                    # drill down to the trailing/simple specifier
+                    tts = ts.trailingTypeSpecifier()
+                    if tts:
+                        return tts.simpleTypeSpecifier()
+            return None
+
+        # ----- Method (has a declSpecifierSeq) -----
+        if ctx.declSpecifierSeq():
+            # extract the method name
+            method_ctx = ctx.declarator()
             if method_ctx:
-                method_name = method_ctx.getText()
-                instance = self.create_OWL_class_instance(method_ctx, "Method", method_name)
-                if instance:
-                    self.create_OWL_data_property_instance(instance, "hasCodeIdentifier", method_name)
+                method_ctx = method_ctx.pointerDeclarator() if hasattr(method_ctx, "pointerDeclarator") and callable(method_ctx.pointerDeclarator) else None
+            if method_ctx:
+                method_ctx = method_ctx.noPointerDeclarator() if hasattr(method_ctx, "noPointerDeclarator") and callable(method_ctx.noPointerDeclarator) else None
+            if method_ctx:
+                method_ctx = method_ctx.noPointerDeclarator() if hasattr(method_ctx, "noPointerDeclarator") and callable(method_ctx.noPointerDeclarator) else None
+            if not method_ctx:
+                return
+            method_name = method_ctx.getText()
+            instance = self.create_OWL_class_instance(method_ctx, "Method", method_name)
+            if not instance:
+                return
 
-                    # Add "isAbstract" and "isStatic" properties
-                    if "virtual" in ctx.declSpecifierSeq().getText():
-                        self.create_OWL_data_property_instance(instance, "isAbstract", True)
-                        self.setCurrentComplexTypeAbstract(True)
-                    else:
-                        self.create_OWL_data_property_instance(instance, "isAbstract", False)
+            # method_ctx = (ctx.declarator()
+            #                 .pointerDeclarator()
+            #                 .noPointerDeclarator()
+            #                 .noPointerDeclarator())
+            # if not method_ctx:
+            #     return
 
-                    if "static" in ctx.declSpecifierSeq().getText():
-                        self.create_OWL_data_property_instance(instance, "isStatic", True)
-                    else:
-                        self.create_OWL_data_property_instance(instance, "isStatic", False)
-                    
-                    # Add "IsDeclaredMethodOf" and inverse "DeclaresMethod" edges
-                    # This method is part of some bigger datatype
-                    class_instance = self.getCurrentComplexTypeInstance()
-                    if class_instance:
-                        self.create_OWL_object_property_instance(instance, class_instance, "isDeclaredMethodOf")
-                        self.create_OWL_object_property_instance(class_instance, instance, "declaresMethod")
-                                
-                    # Find the return type of the method
-                    type_ctx = ctx.declSpecifierSeq().declSpecifier()[-1]
-                    return_type_instance = None
-                    
-                    # Add the hasReturnType and isReturnTypeOf edges
-                    if type_ctx.functionSpecifier() is None: # Not a destructor
-                        type_ctx = type_ctx.typeSpecifier().trailingTypeSpecifier()
-                        if type_ctx:
-                            type_ctx = type_ctx.simpleTypeSpecifier()
-                        if type_ctx:
-                            if type_ctx.theTypeName() is None: # primitiveType
-                                if type_ctx.getText() != "void": # Not a void function
-                                    return_type = type_ctx.getText()
-                                    return_type_instance = self.get_instance_from_code_identifier(return_type, class_name="Datatype")
-                                    self.create_OWL_object_property_instance(instance, return_type_instance, "hasReturnType")
-                                    self.create_OWL_object_property_instance(return_type_instance, instance, "isReturnTypeOf")
-                            else: #ComplexType
-                                type_ctx = type_ctx.theTypeName().className()
-                                return_type_instance = self.get_instance_from_lsp_definition(type_ctx, type_ctx.getText())
-                                if return_type_instance:
-                                    self.create_OWL_object_property_instance(instance, return_type_instance, "hasReturnType")
-                                    self.create_OWL_object_property_instance(return_type_instance, instance, "isReturnTypeOf")
-            
-        else:  # constructor
-            constructor_name = ctx.declarator().pointerDeclarator().noPointerDeclarator().noPointerDeclarator()
-            if constructor_name:
-                constructor_name = constructor_name.getText()
-                instance = self.create_OWL_class_instance(ctx.declarator().pointerDeclarator().noPointerDeclarator().noPointerDeclarator(), "Constructor", constructor_name)
-                if instance:
-                    self.create_OWL_data_property_instance(instance, "hasCodeIdentifier", constructor_name)
-                    
-                    # Add "isDeclaredConstructorOf" and inverse "declaresConstructor" edges
-                    class_instance = self.getCurrentComplexTypeInstance()
-                    if class_instance:
-                        self.create_OWL_object_property_instance(instance, class_instance, "isDeclaredConstructorOf")
-                        self.create_OWL_object_property_instance(class_instance, instance, "declaresConstructor")
+            method_name = method_ctx.getText()
+            instance = self.create_OWL_class_instance(method_ctx, "Method", method_name)
+            if not instance:
+                return
 
-                    # Find the refferences of the constructor
-                    reffereced_instances = self.get_instances_where_field_method_constructor_instance_is_refferenced(ctx.declarator().pointerDeclarator().noPointerDeclarator().noPointerDeclarator())
-                    if reffereced_instances:
-                        for reffereced_instance in reffereced_instances:
-                            self.constructorDictionary[reffereced_instance] = instance
+            # identifier
+            self.create_OWL_data_property_instance(instance, "hasCodeIdentifier", method_name)
+
+            # abstract/static flags
+            specs = ctx.declSpecifierSeq().getText().split()
+            self.create_OWL_data_property_instance(instance, "isAbstract", "virtual" in specs)
+            if "virtual" in specs:
+                self.setCurrentComplexTypeAbstract(True)
+
+            self.create_OWL_data_property_instance(instance, "isStatic", "static" in specs)
+
+            # link to its enclosing class/struct
+            class_inst = self.getCurrentComplexTypeInstance()
+            if class_inst:
+                self.create_OWL_object_property_instance(instance, class_inst, "isDeclaredMethodOf")
+                self.create_OWL_object_property_instance(class_inst, instance, "declaresMethod")
+
+            # return‐type (skip constructors, pure‐virtuals, etc.)
+            ret_spec = _extract_return_type_spec(ctx)
+            if ret_spec and ret_spec.getText() != "void":
+                # primitive vs. complex
+                if ret_spec.theTypeName() is None:
+                    # primitive
+                    rt = ret_spec.getText()
+                    rt_inst = self.get_instance_from_code_identifier(rt, class_name="Datatype")
+                else:
+                    # user‐defined type
+                    className = ret_spec.theTypeName().className()
+                    rt_inst = self.get_instance_from_lsp_definition(className, className.getText())
+
+                if rt_inst:
+                    self.create_OWL_object_property_instance(instance, rt_inst, "hasReturnType")
+                    self.create_OWL_object_property_instance(rt_inst, instance, "isReturnTypeOf")
+
+        # ----- Constructor (no declSpecifierSeq) -----
+        else:
+            ctor_ctx = (ctx.declarator()
+                        .pointerDeclarator()
+                        .noPointerDeclarator()
+                        .noPointerDeclarator())
+            if not ctor_ctx:
+                return
+
+            ctor_name = ctor_ctx.getText()
+            instance = self.create_OWL_class_instance(ctor_ctx, "Constructor", ctor_name)
+            if instance:
+                self.create_OWL_data_property_instance(instance, "hasCodeIdentifier", ctor_name)
+
+                class_inst = self.getCurrentComplexTypeInstance()
+                if class_inst:
+                    self.create_OWL_object_property_instance(instance, class_inst, "isDeclaredConstructorOf")
+                    self.create_OWL_object_property_instance(class_inst, instance, "declaresConstructor")
+
+                # track constructor→method references
+                refs = self.get_instances_where_field_method_constructor_instance_is_refferenced(ctor_ctx)
+                for r in refs or ():
+                    self.constructorDictionary[r] = instance
+
+        # ----- common post‐processing -----
         if instance:
-            # Keep track of the current function
             self.setCurrentMethodInstance(instance)
             self.sharedConstructorAndMethodEnterConfig(ctx, instance)
-            # Set the default access modifier of the nodes inside the function
             self.setCurrentModifierInstance("private")
 
     def enterMemberDeclarator(self, ctx):
@@ -239,11 +291,14 @@ class CPPListener(CPP14ParserListener, CPPListenerBase):
         if instance: 
             modifier = self.getCurrentModifierInstance()
             if modifier is None:
-                modifier = get_instance_from_code_identifier("public", class_name = "AccessModifier")
+                modifier = self.get_instance_from_code_identifier("public", class_name = "AccessModifier")
             self.create_OWL_object_property_instance(instance, self.accessModifierInstances[modifier], "hasAccessModifier")
 
     def enterParameterDeclaration(self, ctx):
         """ Create a node of type "Parameter" for each parameter in the source code."""
+
+        if not ctx.declSpecifierSeq() or not ctx.declSpecifierSeq().declSpecifier():
+            return
 
         parameter_ctx = ctx.declarator()
         if parameter_ctx:
@@ -251,9 +306,20 @@ class CPPListener(CPP14ParserListener, CPPListenerBase):
             instance = self.create_OWL_class_instance(ctx.declarator(), "Parameter", parameter_name)
             if instance:
                 self.create_OWL_data_property_instance(instance, "hasCodeIdentifier", parameter_name)
-
+                position = None
+                parent_list = getattr(ctx.parentCtx, "parameterDeclaration", None)
+                if parent_list and callable(parent_list):
+                    param_list = parent_list()
+                    if isinstance(param_list, list):
+                        try:
+                            position = param_list.index(ctx)
+                        except ValueError:
+                            position = None
+                if position is None:
+                    # If the position is not found, we can use the index of the parameter in the parent context
+                    position = 0
                 # Adds "hasPosition" data property to the parameter
-                position = ctx.parentCtx.parameterDeclaration().index(ctx)
+                # position = ctx.parentCtx.parameterDeclaration().index(ctx)
                 self.create_OWL_data_property_instance(instance, "hasPosition", position)
                 self.sharedFieldParameterVariableEnterConfig(ctx.declSpecifierSeq().getText(), instance, ctx)
 
@@ -284,6 +350,9 @@ class CPPListener(CPP14ParserListener, CPPListenerBase):
     def enterInitDeclarator(self, ctx):
         """ Create a node of type "Variable" for each variable in the source code."""
 
+        if not ctx.parentCtx.parentCtx.declSpecifierSeq() or not ctx.parentCtx.parentCtx.declSpecifierSeq().declSpecifier():
+            return
+
         declarator_specifier = ctx.parentCtx.parentCtx.declSpecifierSeq()
         if declarator_specifier is not None:
             variable_name = ctx.declarator().getText()
@@ -295,24 +364,37 @@ class CPPListener(CPP14ParserListener, CPPListenerBase):
                 self.sharedFieldParameterVariableEnterConfig(declarator_specifier.getText(), instance, ctx)
                 self.create_OWL_data_property_instance(instance, "isStaticVariable", "static" in declarator_specifier.getText())
 
+                # — safe extraction of the final simpleTypeSpecifier —
+                type_ctx = None
+                seq = ctx.parentCtx.parentCtx.declSpecifierSeq().declSpecifier()
+                for spec in reversed(seq):
+                    ts = spec.typeSpecifier()
+                    if not ts:
+                        continue
+                    tail = ts.trailingTypeSpecifier()
+                    if not tail:
+                        continue
+                    simple = tail.simpleTypeSpecifier()
+                    if simple:
+                        type_ctx = simple
+                        break
+
                 # Add the "hasDatatype" and "isDatatypeOf" edges for the variable
-                type_ctx = ctx.parentCtx.parentCtx.declSpecifierSeq().declSpecifier()[-1].typeSpecifier().trailingTypeSpecifier()
                 if type_ctx:
-                    type_ctx = type_ctx.simpleTypeSpecifier()
-                if type_ctx:
-                    if type_ctx.theTypeName() is None: #primitiveType'
+                    if type_ctx.theTypeName() is None:  # primitiveType
                         datatype = type_ctx.getText()
-                        datatype_instance = self.get_instance_from_code_identifier(datatype, class_name = "Datatype")
+                        datatype_instance = self.get_instance_from_code_identifier(datatype, class_name="Datatype")
                         if datatype_instance:
                             self.create_OWL_object_property_instance(instance, datatype_instance, "hasDatatype")
                             self.create_OWL_object_property_instance(datatype_instance, instance, "isDatatypeOf")
-                    else: #ComplexType
-                        type_ctx = type_ctx.theTypeName().className()
-                        datatype_instance = self.get_instance_from_lsp_definition(type_ctx, type_ctx.getText())
-                        if datatype_instance:
-                            self.create_OWL_object_property_instance(instance, datatype_instance, "hasDatatype")
-                            self.create_OWL_object_property_instance(datatype_instance, instance, "isDatatypeOf")
-        
+                    else:  # ComplexType
+                        cname_ctx = type_ctx.theTypeName().className()
+                        if cname_ctx:
+                            datatype_instance = self.get_instance_from_lsp_definition(cname_ctx, cname_ctx.getText())
+                            if datatype_instance:
+                                self.create_OWL_object_property_instance(instance, datatype_instance, "hasDatatype")
+                                self.create_OWL_object_property_instance(datatype_instance, instance, "isDatatypeOf")
+
     def enterAccessSpecifier(self, ctx):
         """ Keep track of the access modifiers """
 
@@ -323,7 +405,19 @@ class CPPListener(CPP14ParserListener, CPPListenerBase):
     def enterTryBlock(self, ctx):
         """ Add "catchesException" and "isCaughtBy" edges. """
 
-        exc_ctx = ctx.handlerSeq().handler()[-1].exceptionDeclaration().typeSpecifierSeq().typeSpecifier()[-1]
+        exc_ctx = None
+        handler_seq = ctx.handlerSeq() if hasattr(ctx, "handlerSeq") else None
+        if handler_seq and hasattr(handler_seq, "handler"):
+            handlers = handler_seq.handler()
+            if handlers and len(handlers) > 0:
+                last_handler = handlers[-1]
+                exc_decl = last_handler.exceptionDeclaration() if hasattr(last_handler, "exceptionDeclaration") else None
+                if exc_decl and hasattr(exc_decl, "typeSpecifierSeq"):
+                    type_spec_seq = exc_decl.typeSpecifierSeq()
+                    if type_spec_seq and hasattr(type_spec_seq, "typeSpecifier"):
+                        type_specifiers = type_spec_seq.typeSpecifier()
+                        if type_specifiers and len(type_specifiers) > 0:
+                            exc_ctx = type_specifiers[-1]
         if exc_ctx:
             exc_name = exc_ctx.getText()
             # Use language server to get the instance of the exception
@@ -338,7 +432,6 @@ class CPPListener(CPP14ParserListener, CPPListenerBase):
     def enterThrowExpression(self, ctx):
         """ Add "throwsException" and "isThrownBy" edges. """
 
-        # no joke this is the actual way to get the exception name (literraly removing the "()" at the end of the name - thats all this is doing)
         exc_ctx = (ctx.assignmentExpression().conditionalExpression().logicalOrExpression()
             .logicalAndExpression()[-1].inclusiveOrExpression()[-1].exclusiveOrExpression()[-1]
             .andExpression()[-1].equalityExpression()[-1].relationalExpression()[-1].shiftExpression()[-1]
@@ -347,18 +440,24 @@ class CPPListener(CPP14ParserListener, CPPListenerBase):
         )
         exc_instance = None
         exc_name = None
-        if hasattr(exc_ctx.newExpression_(), "newTypeId"): # Expression from codebase
-            exc_ctx = exc_ctx.newExpression_().newTypeId().typeSpecifierSeq().typeSpecifier()[-1]
-            exc_name = exc_ctx.getText()
-            exc_instance = self.get_instance_from_lsp_definition(exc_ctx, exc_name)
-        if hasattr(exc_ctx, "postfixExpression()"): # Expression from std
-            exc_ctx = exc_ctx.postfixExpression().postfixExpression().postfixExpression()
+        if hasattr(exc_ctx, "newExpression_") and exc_ctx.newExpression_():
+            ne = exc_ctx.newExpression_()
+            if hasattr(ne, "newTypeId") and ne.newTypeId():
+                exc_ctx = ne.newTypeId().typeSpecifierSeq().typeSpecifier()[-1]
+                exc_name = exc_ctx.getText()
+                exc_instance = self.get_instance_from_lsp_definition(exc_ctx, exc_name)
+        if hasattr(exc_ctx, "postfixExpression") and exc_ctx.postfixExpression():
+            pe = exc_ctx.postfixExpression()
+            if hasattr(pe, "postfixExpression") and pe.postfixExpression():
+                pe2 = pe.postfixExpression()
+                if hasattr(pe2, "postfixExpression") and pe2.postfixExpression():
+                    exc_ctx = pe2.postfixExpression()
         if exc_instance:
             if len(self.methodNestings) > 0:
                 method_instance = self.getCurrentMethodInstance()
                 self.create_OWL_object_property_instance(method_instance, exc_instance, "throwsException")
                 self.create_OWL_object_property_instance(exc_instance, method_instance, "isThrownBy")
-        
+            
     def enterPostfixExpression(self, ctx):
         """ Add the "accessesField" and "isAccessedBy" edges for each field access in the source code 
             Add the "invokesMethod" and "methodIsInvokedBy" edges for each method access in the source code
@@ -394,27 +493,71 @@ class CPPListener(CPP14ParserListener, CPPListenerBase):
             Add "invokesConstructor" and "constructorIsInvokedBy" edges for each object instantiation in the source code
         """
 
-        class_ctx = ctx.newTypeId().typeSpecifierSeq().typeSpecifier()[0].trailingTypeSpecifier().simpleTypeSpecifier().theTypeName().className()
-        if class_ctx:
-            class_name = class_ctx.getText()
-            # "instantiatesClass" and "isInstantiatedBy"
-            reffereced_instance = self.get_instance_from_lsp_definition(class_ctx, class_name)
-            if reffereced_instance:
-                reffered_node_type = self.get_resource_from_instance(reffereced_instance)
-                if reffered_node_type:
-                    if "ClassType" in reffered_node_type:
-                        method_instance = self.getCurrentMethodInstance()
-                        if method_instance:
-                            self.create_OWL_object_property_instance(method_instance, reffereced_instance, "instantiatesClass")
-                            self.create_OWL_object_property_instance(reffereced_instance, method_instance, "isInstantiatedBy")
-                    # "invokesConstructor" and "constructorIsInvokedBy"
-                    id = self.create_deterministic_node_id_from_ctx(ctx.newTypeId().typeSpecifierSeq().typeSpecifier()[0])
-                    if id in self.constructorDictionary:
-                        constructor_instance = self.constructorDictionary[id]
-                        method_instance = self.getCurrentMethodInstance()
-                        if method_instance:
-                            self.create_OWL_object_property_instance(method_instance, constructor_instance, "invokesConstructor")
-                            self.create_OWL_object_property_instance(constructor_instance, method_instance, "constructorIsInvokedBy")
+        # ────────────────────────────────────────────────────────────────
+        # 1.  Drill down cautiously until we find a className() context
+        # ────────────────────────────────────────────────────────────────
+        nti  = ctx.newTypeId()
+        if not nti:
+            return                                    # e.g.  “new (buf) T”
+
+        tseq = nti.typeSpecifierSeq()
+        if not tseq or not tseq.typeSpecifier():
+            return
+
+        target_cls_ctx = None
+        for ts in tseq.typeSpecifier():               # walk left → right
+            tail = ts.trailingTypeSpecifier()
+            if not tail:
+                continue
+            simp = tail.simpleTypeSpecifier()
+            if not simp:
+                continue
+            tname = simp.theTypeName()
+            if not tname:
+                continue
+            cname = tname.className()
+            if cname:
+                target_cls_ctx = cname                # found it!
+                break
+
+        if target_cls_ctx is None:                    #   built‑ins: new int
+            return
+
+        class_name = target_cls_ctx.getText()
+
+        # ────────────────────────────────────────────────────────────────
+        # 2.  Ordinary “instantiatesClass / isInstantiatedBy” link
+        # ────────────────────────────────────────────────────────────────
+        referenced_instance = self.get_instance_from_lsp_definition(
+            target_cls_ctx, class_name
+        )
+        if referenced_instance:
+            node_type = self.get_resource_from_instance(referenced_instance)
+            if node_type and "ClassType" in node_type:
+                method_inst = self.getCurrentMethodInstance()
+                if method_inst:
+                    self.create_OWL_object_property_instance(
+                        method_inst, referenced_instance, "instantiatesClass"
+                    )
+                    self.create_OWL_object_property_instance(
+                        referenced_instance, method_inst, "isInstantiatedBy"
+                    )
+
+        # ────────────────────────────────────────────────────────────────
+        # 3.  Constructor call mapping  (optional)
+        # ────────────────────────────────────────────────────────────────
+        first_ts = tseq.typeSpecifier()[0]            # safe: we know the list exists
+        ctor_id  = self.create_deterministic_node_id_from_ctx(first_ts)
+        if ctor_id in self.constructorDictionary:
+            ctor_inst   = self.constructorDictionary[ctor_id]
+            method_inst = self.getCurrentMethodInstance()
+            if method_inst:
+                self.create_OWL_object_property_instance(
+                    method_inst, ctor_inst, "invokesConstructor"
+                )
+                self.create_OWL_object_property_instance(
+                    ctor_inst, method_inst, "constructorIsInvokedBy"
+                )
 
     """ Exit methods (Listener overrides) """
 
