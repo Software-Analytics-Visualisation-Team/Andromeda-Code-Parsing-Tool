@@ -270,3 +270,7 @@ To fix this, we have added the implementsInterface edge and pair from the node o
 Also, due to lsp and antlr limitations, there is no context for #include clauses to see what .cpp file implements what .h file, 
 so we can check either only the first lines before a context is encountered, or check all the lines for #include statements using lsp, for which we have found no way of computing.
 Thus, we assume the #inlcude statement is at the start of the file, before any contex of antlr can be found.
+
+# Reference
+
+For automated installation of Galaxy and the Moonshot tools (including SPIF-to-SVIF-Tool), see the Andromeda Ansible playbooks: [Software-Analytics-Visualisation-Team/andromeda-ansible](https://github.com/Software-Analytics-Visualisation-Team/andromeda-ansible.git).
