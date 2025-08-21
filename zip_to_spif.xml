@@ -1,7 +1,7 @@
 <tool id="zip_to_spif" name="Code to SPIF" version="1.0.3">
   <description>converts zip (code) data to SPIF data</description>
   <requirements>
-    <requirement type="package">monitors4codegen</requirement>
+    <requirement type="package" version="0.0.2">monitors4codegen</requirement>
     <requirement type="package" version="3.10">python</requirement>
   </requirements>
   <command>python3 '${__tool_directory__}/main.py' '$input' '$output'</command>
