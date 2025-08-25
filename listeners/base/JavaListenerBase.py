@@ -182,6 +182,11 @@ class JavaListenerBase(OWLConstructor):
             if modifier in self.accessModifierInstances.keys():
                 self.create_OWL_object_property_instance(instance, self.accessModifierInstances[modifier], "hasAccessModifier")
 
+        def _as_list(x):
+            if x is None:
+                return []
+            return x if isinstance(x, (list, tuple)) else [x]
+            
         def parseExpression(expression_context):
             """ Parse an expression and create the necessary edges."""
 
@@ -221,7 +226,7 @@ class JavaListenerBase(OWLConstructor):
                     self.create_OWL_object_property_instance(instance, created_class_instance, "instantiatesClass")
                     self.create_OWL_object_property_instance(created_class_instance, instance, "isInstantiatedBy")
                     # Add "usesComplexType" edge.
-                    if (created_class_instance != current_complex_type_instance):
+                    if current_complex_type_instance and (created_class_instance != current_complex_type_instance):
                         self.create_OWL_object_property_instance(current_complex_type_instance, created_class_instance, "usesComplexType")
                 # "invokesConstructor" and "constructorIsInvokedBy" edges.
                 id = self.create_deterministic_node_id_from_ctx(expression_context)
@@ -232,49 +237,45 @@ class JavaListenerBase(OWLConstructor):
 
         def parseStatements(statements):
             """ Parse statements and create the necessary edges."""
-
-            for statement in statements:
-                # Statement is of type BlockStatementContext  
+            for statement in _as_list(statements):
+                # Statement is of type BlockStatementContext
                 statement_context = statement.statement()
                 if statement_context:
                     # statement_context is of type StatementContext
-                    expression_contexts = statement_context.expression()
-                    for expression_context in expression_contexts:
+                    for expression_context in _as_list(statement_context.expression()):
                         parseExpression(expression_context)
-                    
+
                     # Add "catchesException" and "isCaughtBy" edges.
-                    catchClauseContexts = statement_context.catchClause()
-                    if catchClauseContexts:
-                        for catchClauseContext in catchClauseContexts:
+                    for catchClauseContext in _as_list(statement_context.catchClause()):
+                        if catchClauseContext:
                             catch_type_ctx = catchClauseContext.catchType()
-                            exception_name = catch_type_ctx.getText()
-                            exception_instance = self.get_instance_from_lsp_definition(catch_type_ctx, exception_name, class_name="ExceptionType")
-                            if exception_instance:
-                                self.create_OWL_object_property_instance(instance, exception_instance, "catchesException")
-                                self.create_OWL_object_property_instance(exception_instance, instance, "isCaughtBy")
+                            if catch_type_ctx:
+                                exception_name = catch_type_ctx.getText()
+                                exception_instance = self.get_instance_from_lsp_definition(
+                                    catch_type_ctx, exception_name, class_name="ExceptionType"
+                                )
+                                if exception_instance:
+                                    self.create_OWL_object_property_instance(instance, exception_instance, "catchesException")
+                                    self.create_OWL_object_property_instance(exception_instance, instance, "isCaughtBy")
                 else:
                     # statement_context is of type LocalVariableDeclarationContext
                     local_variable_declaration_context = statement.localVariableDeclaration()
                     if local_variable_declaration_context:
-                        expression_contexts = local_variable_declaration_context.expression()
-                        # Check if there are any expressions in the local variable declaration.
-                        if expression_contexts:
-                            for expression_context in expression_contexts:
-                                parseExpression(expression_context)
-                        else:
-                            variable_declarators = local_variable_declaration_context.variableDeclarators()
-                            if variable_declarators:
-                                variable_declarator_contexts = variable_declarators.variableDeclarator()
-                                for variable_declarator_context in variable_declarator_contexts:
-                                    initializer = variable_declarator_context.variableInitializer()
-                                    if initializer:
-                                        expression_context = initializer.expression()
-                                        if expression_context:
-                                            parseExpression(expression_context)
-        
-        # Parse all statements in this block.
-        parseStatements(block_context.blockStatement())
+                        for expression_context in _as_list(local_variable_declaration_context.expression()):
+                            parseExpression(expression_context)
 
+                        variable_declarators = local_variable_declaration_context.variableDeclarators()
+                        if variable_declarators:
+                            for variable_declarator_context in _as_list(variable_declarators.variableDeclarator()):
+                                initializer = variable_declarator_context.variableInitializer()
+                                if initializer:
+                                    expression_context = initializer.expression()
+                                    if expression_context:
+                                        parseExpression(expression_context)
+                                                
+        # Parse all statements in this block.
+        parseStatements(_as_list(block_context.blockStatement()))
+        
         current_file_name = self.filename_from_ctx(ctx)
         # "accessesField" and "isAccessedBy" edges.
         for field_instance, referenced_locations in self.fieldsDictionary.items():
@@ -289,7 +290,7 @@ class JavaListenerBase(OWLConstructor):
                         self.create_OWL_object_property_instance(field_instance, instance, "isAccessedBy")
                         # Add "usesComplexType" edge.
                         used_complex_type = self.get_attribute_instance_from_instance(field_instance, "isDeclaredFieldOf")
-                        if used_complex_type and (current_complex_type_instance != used_complex_type):
+                        if current_complex_type_instance and used_complex_type and (current_complex_type_instance != used_complex_type):
                             self.create_OWL_object_property_instance(current_complex_type_instance, used_complex_type, "usesComplexType")
                         self.fieldsDictionary[field_instance].remove(location)
                         break
