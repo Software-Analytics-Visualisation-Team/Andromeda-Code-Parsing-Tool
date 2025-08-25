@@ -218,7 +218,8 @@ class JavaListener(JavaParserListener, JavaListenerBase):
         
         # Add "isStatic" property.
         if "static" in self.modifiersForNextThingToBeEncountered:
-            self.create_OWL_data_property_instance(self.getCurrentMethodInstance(), "isStatic", True)
+            # self.create_OWL_data_property_instance(self.getCurrentMethodInstance(), "isStatic", True)
+            self.create_OWL_data_property_instance(instance, "isStatic", True)
 
         # Perform shared method enter configuration
         method_body_block_context = ctx.methodBody().block()
