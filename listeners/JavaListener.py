@@ -169,11 +169,16 @@ class JavaListener(JavaParserListener, JavaListenerBase):
     def enterLocalVariableDeclaration(self, ctx):
         """ Create a node of type "Variable" for each variable in the source code."""
 
-        variable_name = ctx.variableDeclarators().variableDeclarator(0).variableDeclaratorId().getText()
-        instance = self.create_OWL_class_instance(ctx, "Variable", variable_name)
-        self.create_OWL_data_property_instance(instance, "hasCodeIdentifier", variable_name)
-
-        self.sharedVariableEnterConfig(ctx, instance)
+        variableDeclarators = ctx.variableDeclarators()
+        if variableDeclarators is not None:
+            variableDeclarator = variableDeclarators.variableDeclarator(0)
+            if variableDeclarator is not None:
+                variableDeclaratorId = variableDeclarator.variableDeclaratorId()
+                if variableDeclaratorId is not None:
+                    variable_name = variableDeclaratorId.getText()
+                    instance = self.create_OWL_class_instance(ctx, "Variable", variable_name)
+                    self.create_OWL_data_property_instance(instance, "hasCodeIdentifier", variable_name)
+                    self.sharedVariableEnterConfig(ctx, instance)
 
     def enterMethodDeclaration(self, ctx):
         """ Create a node of type "Method" for each method in the source code."""
