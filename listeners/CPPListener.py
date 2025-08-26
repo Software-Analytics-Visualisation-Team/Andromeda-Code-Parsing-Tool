@@ -237,62 +237,62 @@ class CPPListener(CPP14ParserListener, CPPListenerBase):
             self.sharedConstructorAndMethodEnterConfig(ctx, instance)
             self.setCurrentModifierInstance("private")
 
-    def enterMemberDeclarator(self, ctx):
-        """ Create a node of type "Field" for each field in the source code.
-            Create a node of type "Method" for each pure virtual method in the source code.
-            This function can find fields and pure virtual methods.
-        """
+def enterMemberDeclarator(self, ctx):
+    """ Create a node of type "Field" for each field in the source code.
+        Create a node of type "Method" for each pure virtual method in the source code.
+        This function can find fields and pure virtual methods.
+    """
 
-        # The pure virtual method is counted, so we have to exclude it
-        instance = None
-        declarator_ctx = ctx.parentCtx.parentCtx.declSpecifierSeq()
-        if declarator_ctx:
-            declarator_specifier = declarator_ctx.getText()
-            if "virtual" not in declarator_specifier and ")" not in ctx.declarator().getText():
-                field_name = ctx.declarator().getText()
-                instance = self.create_OWL_class_instance(ctx.declarator(), "Field", field_name)
-                if instance:
-                    self.create_OWL_data_property_instance(instance, "hasCodeIdentifier", field_name)
-                    
-                    # Add "isDeclaredFieldOf" and inverse "declaresField" edges
-                    class_instance = self.getCurrentComplexTypeInstance()
-                    if class_instance:
-                        self.create_OWL_object_property_instance(instance, class_instance, "isDeclaredFieldOf")
-                        self.create_OWL_object_property_instance(class_instance, instance, "declaresField")
+    instance = None
 
-                    self.sharedFieldParameterVariableEnterConfig(declarator_ctx.getText(), instance, ctx.parentCtx.parentCtx)
-            else: #pure virtual method
-                method_ctx = ctx.declarator().pointerDeclarator().noPointerDeclarator().noPointerDeclarator()
-                if method_ctx:
-                    method_name = method_ctx.getText()
-                    instance = self.create_OWL_class_instance(method_ctx, "Method", method_name)
-                    self.create_OWL_data_property_instance(instance, "hasCodeIdentifier", method_name)
+    # Specificator sequence (detect 'virtual' and type the field)
+    declarator_ctx = ctx.parentCtx.parentCtx.declSpecifierSeq()
+    if not declarator_ctx:
+        return
 
-                    # Add "IsDeclaredMethodOf" and inverse "DeclaresMethod" edges
-                    class_instance = self.getCurrentComplexTypeInstance()
-                    if class_instance:
-                        self.create_OWL_object_property_instance(instance, class_instance, "isDeclaredMethodOf")
-                        self.create_OWL_object_property_instance(class_instance, instance, "declaresMethod")
+    declarator_specifier = declarator_ctx.getText()
 
-                    self.create_OWL_data_property_instance(instance, "isAbstract", True)
-                    self.setCurrentComplexTypeAbstract(True)
-                    self.sharedConstructorAndMethodEnterConfig(ctx.parentCtx.parentCtx, instance)
-        else: #pure virtual constructor in case of .h files
-            c_name = ctx.declarator().pointerDeclarator().noPointerDeclarator().noPointerDeclarator().getText()
-            instance = self.create_OWL_class_instance(ctx.declarator().pointerDeclarator().noPointerDeclarator().noPointerDeclarator(), "Constructor", c_name)
+    # Recover the declarator and its text
+    declarator = ctx.declarator() if hasattr(ctx, "declarator") else None
+    declarator_text = declarator.getText() if declarator else ""
+
+    # "Field" case : not 'virtual' and no parentheses in the name, but only if we have a declarator
+    if declarator and "virtual" not in declarator_specifier and ")" not in declarator_text:
+        field_name = declarator_text
+        instance = self.create_OWL_class_instance(declarator, "Field", field_name)
+        if instance:
+            self.create_OWL_data_property_instance(instance, "hasCodeIdentifier", field_name)
+
+            # Link to current complex type
+            class_instance = self.getCurrentComplexTypeInstance()
+            if class_instance:
+                self.create_OWL_object_property_instance(instance, class_instance, "isDeclaredFieldOf")
+                self.create_OWL_object_property_instance(class_instance, instance, "declaresField")
+
+            # Shared properties (static/const, etc.)
+            self.sharedFieldParameterVariableEnterConfig(declarator_ctx.getText(), instance, ctx.parentCtx.parentCtx)
+
+    else:
+        # "pure virtual method" case : safely drill down the chain
+        method_ctx = None
+        if declarator:
+            pd = getattr(declarator, "pointerDeclarator", None)
+            method_ctx = pd() if callable(pd) else None
+            if method_ctx:
+                npd = getattr(method_ctx, "noPointerDeclarator", None)
+                method_ctx = npd() if callable(npd) else None
+            if method_ctx:
+                npd2 = getattr(method_ctx, "noPointerDeclarator", None)
+                method_ctx = npd2() if callable(npd2) else None
+
+        if method_ctx:
+            method_name = method_ctx.getText()
+            instance = self.create_OWL_class_instance(method_ctx, "Method", method_name)
             if instance:
-                self.create_OWL_data_property_instance(instance, "hasCodeIdentifier", c_name)
-                # Add "isDeclaredConstructorOf" and "declaresConstructor" edges
-                class_instance = self.getCurrentComplexTypeInstance()
-                if class_instance:
-                    self.create_OWL_object_property_instance(instance, class_instance, "isDeclaredConstructorOf")
-                    self.create_OWL_object_property_instance(class_instance, instance, "declaresConstructor")
-        # Add "hasAccessModifier" edge
-        if instance: 
-            modifier = self.getCurrentModifierInstance()
-            if modifier is None:
-                modifier = self.get_instance_from_code_identifier("public", class_name = "AccessModifier")
-            self.create_OWL_object_property_instance(instance, self.accessModifierInstances[modifier], "hasAccessModifier")
+                self.create_OWL_data_property_instance(instance, "hasCodeIdentifier", method_name)
+
+    # Nothing to do here if we couldn't determine the node: we ignore this member instead of crashing.
+    return
 
     def enterParameterDeclaration(self, ctx):
         """ Create a node of type "Parameter" for each parameter in the source code."""
